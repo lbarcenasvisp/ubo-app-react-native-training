@@ -1,0 +1,79 @@
+version: 2.1
+
+executors:
+  js:
+    docker:
+      - image: circleci/node:10.16.0
+    working_directory: ~/ubolite
+    environment:
+      YARN_CACHE_FOLDER: ~/yarn_cache
+
+  android:
+    # WARNING: medium (default) seems not to be enough for Turtle
+    resource_class: xlarge
+    docker:
+      # https://github.com/expo/expo-turtle-android
+      - image: dsokal/expo-turtle-android
+    working_directory: ~/ubolite
+    environment:
+      TURTLE_VERSION: 0.5.7
+      PLATFORM: android
+      YARN_CACHE_FOLDER: ~/yarn_cache
+
+commands:
+  determine_expo_sdk_version:
+    steps:
+      - run:
+          name: Determine Expo SDK version for this project
+          command: cat app.json | jq '.expo.sdkVersion' -r > /tmp/expo-sdk-version
+
+  add_yarn_binaries_to_path:
+    steps:
+      - run:
+          name: Add yarn binaries path to $PATH
+          command: echo 'export PATH=~/.yarn/bin:$PATH' >> $BASH_ENV
+
+  restore_yarn_cache:
+    steps:
+      - restore_cache:
+          keys:
+          - cache-yarn-{{ checksum "package.json" }}
+
+  save_yarn_cache:
+    steps:
+      - save_cache:
+          paths:
+            - ~/yarn_cache
+          key: cache-yarn-{{ checksum "package.json" }}
+
+workflows:
+  version: 2
+  builds:
+    jobs:
+      - build_android:
+          filters:
+            branches:
+              only: master
+
+jobs:
+  build_android:
+    executor: android
+    steps:
+      - checkout
+      - determine_expo_sdk_version
+      - add_yarn_binaries_to_path
+      - run:
+          name: Installing expo-cli
+          command: yarn global add expo-cli
+      - run:
+          name: Installing npm modules
+          command: yarn install
+      - run:
+          name: Building Expo standalone app
+          command: |
+            expo login -u $EXPO_USERNAME -p $EXPO_PASSWORD --non-interactive
+            expo build:android --non-interactive > ~/ubolite/build.log
+            wget -cO - $(grep 'Successfully built standalone app' ~/ubolite/build.log  | cut -d ' ' -f 6) > ~/ubolite/ubolite.apk
+          no_output_timeout: 45m
+      - store_artifacts:
+          path: ~/ubolite/ubolite.apk
